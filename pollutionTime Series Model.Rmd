@@ -1,0 +1,230 @@
+---
+title: "Time Series Model"
+author: "Derek Grubis"
+date: "11/17/2018"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Load Packages
+
+```{r}
+library(forecast)
+library(tidyverse)
+library(scales)
+```
+
+## Read in Data
+
+```{r}
+## Load
+df <- read_csv('/Users/dgrubis/Desktop/DS 5110/pollution_us_2000_2016.csv') %>% select(2:29)
+
+colnames(df)[colnames(df) == 'Date Local'] <- "date"
+df$date <- as.Date(df$date)
+
+## Add Date columns
+df$year <- year(df$date)
+df$quarter <- quarter(df$date)
+df$month <- month(df$date)
+df$month_year <- sprintf("0%s %s", df$month, df$year)
+df$join_quarter <- sprintf("%s:Q%s", df$year, df$quarter) ## For join with gdp/quarter charts
+
+## Quarter df filtered for 2004+ but can change(used bc gdp data)
+quarter_df <- df %>% group_by(join_quarter) %>% summarize(median_no2 = median(`NO2 Mean`)
+                                            , median_o3 = median(`O3 Mean`)
+                                            , median_so2 = median(`SO2 Mean`)
+                                            , median_co = median(`CO Mean`))
+```
+
+```{r}
+monthly_df <- df %>% group_by(month_year) %>% summarize(median_no2 = median(`NO2 Mean`)
+                                            , median_o3 = median(`O3 Mean`)
+                                            , median_so2 = median(`SO2 Mean`)
+                                            , median_co = median(`CO Mean`))
+monthly_df %>%
+  ggplot(aes(x = month_year, y = median_no2, group = 1)) +
+  geom_line()
+#Considered month or quaterly but not enough years in dataset
+```
+
+Visualize Time Series
+
+```{r}
+## PLOTS BY DAY
+## median pollutants by day
+median_pollution_by_date <- df %>% group_by(date) %>% summarize(median_no2 = median(`NO2 Mean`)
+                                                            , median_o3 = median(`O3 Mean`)
+                                                            , median_so2 = median(`SO2 Mean`)
+                                                            , median_co = median(`CO Mean`))
+```
+
+```{r}
+## Plot pollutants
+for (col in colnames(median_pollution_by_date[2:5])) {
+  plt <- median_pollution_by_date %>% ggplot(aes(x = date)) + geom_line(aes_string(y = col)) + 
+    labs(title = col) +
+    scale_x_date(labels = date_format("%b %y"))
+  print(plt)
+}
+
+#Seasonality appears in what appears all 3 but so2?
+```
+
+#NO2
+
+## Create Time Series Object
+
+```{r}
+#In order to work with a lot of the functions and plot visuals, the time series needs to become a "time series object". Changes it from a dataframe
+
+no2_by_day <-
+  median_pollution_by_date %>%
+  select(date, median_no2)
+no2_ts <- ts(no2_by_day, frequency = 365) #specify 365 since we're dealing with daily data
+```
+
+## Decompose Time Series 
+
+```{r}
+#visualze different components of time series before differencing
+plot(stl(no2_ts[,2], s.window = "periodic"))
+```
+
+TS is non-stationary so will need to have differencing applied to become stationary
+
+```{r}
+#differenced with dplyr method // scrap this went with more simple/efficient method
+diff_no2_ts <- median_pollution_by_date %>%
+  select(date, median_no2) %>%
+  mutate(diff_no2 = median_no2 - lag(median_no2),
+         sec_diff_no2 = diff_no2 - lag(diff_no2))
+diff_no2_ts %>%
+  ggplot(aes(x = date, y = diff_no2)) +
+  geom_line() +
+  scale_x_date(labels = date_format("%b %y"))
+
+diff_no2_ts %>%
+  ggplot(aes(x = date, y = sec_diff_no2)) +
+  geom_line() +
+  scale_x_date(labels = date_format("%b %y"))
+```
+
+## ACF and PACF plots
+
+```{r}
+acf(no2_ts[,2])
+pacf(no2_ts[,2])
+
+#MA model will probably work best due to PACF
+#ACF-autocorrelation function
+#PACF-partial autocorrelation function
+#MA-moving average
+#AR-autoregressive
+```
+
+## Fit Model
+
+```{r}
+no2_model <- Arima(no2_ts[,2], order = c(0,0,0), seasonal = c(0,1,0))
+no2_model
+#using an ARIMA model that uses the strong seasonality of the data to predict
+```
+## Plot Predictions
+
+```{r}
+autoplot(forecast(no2_model, h = 730))
+```
+
+## Fitting Model with Automated Function
+
+```{r}
+no2_model2 <- auto.arima(no2_ts[,2])
+no2_model2
+
+#this model doesn't produce as good of a shape because it doesn't include a seasonal component but it fits it better
+```
+
+```{r}
+autoplot(forecast(no2_model2, h = 730))
+
+#flat line predictions aren't pretty but are trusted for time series models
+```
+
+----------------------------------------------------------------------------------------
+#CO
+
+```{r}
+co_by_day <-
+  median_pollution_by_date %>%
+  select(date, median_co)
+co_ts <- ts(co_by_day, frequency = 365)
+```
+
+```{r}
+plot(stl(co_ts[,2], s.window = "periodic"))
+```
+
+```{r}
+acf(co_ts[,2])
+pacf(co_ts[,2])
+```
+
+```{r}
+co_model <- Arima(co_ts[,2], order = c(0,0,0), seasonal = c(0,1,0))
+co_model
+```
+
+```{r}
+autoplot(forecast(co_model, h = 730))
+```
+
+```{r}
+#co_model2 <- auto.arima(co_ts[,2])
+#co_model2
+```
+
+```{r}
+#autoplot(forecast(co_model2, h = 730))
+```
+
+----------------------------------------------------------------------------------------
+#SO2
+
+```{r}
+so2_by_day <-
+  median_pollution_by_date %>%
+  select(date, median_so2)
+so2_ts <- ts(so2_by_day, frequency = 365)
+```
+
+```{r}
+plot(stl(so2_ts[,2], s.window = "periodic"))
+```
+
+```{r}
+acf(so2_ts[,2])
+pacf(so2_ts[,2])
+```
+
+```{r}
+so2_model <- Arima(so2_ts[,2], order = c(0,0,0), seasonal = c(0,1,0))
+so2_model
+```
+
+```{r}
+autoplot(forecast(so2_model, h = 730))
+```
+
+```{r}
+so2_model2 <- auto.arima(so2_ts[,2])
+so2_model2
+```
+
+```{r}
+autoplot(forecast(so2_model2, h = 730))
+```
+

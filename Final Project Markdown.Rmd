@@ -1,0 +1,606 @@
+---
+title: "Final Project"
+author: "Devon Kohler"
+date: "November, 2018"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r load_packages}
+
+library(tidyverse)
+library(lubridate)
+library(corrplot)
+library(magick)
+library(maps)
+library(readr)
+library(dplyr)
+library(stringr)
+library(tidyr)
+library(cowplot)
+library(httr)
+library(modelr)
+```
+
+
+# Load Initial Data
+
+```{r cars}
+## Load
+pollution_df <- read_csv('pollution_us_2000_2016.csv', progress = FALSE) %>% select(2:29)
+
+## Add Date columns
+pollution_df$year <- year(pollution_df$`Date Local`)
+pollution_df$quarter <- quarter(pollution_df$`Date Local`)
+pollution_df$join_quarter <- sprintf("%s:Q%s", pollution_df$year, pollution_df$quarter) ## For join with gdp/quarter charts
+
+## year_df (Made in Python.. sorta don't like but w/e -Devon)
+df_year <- read_csv('df_by_year_fixed.csv')
+
+## Quarter df filtered for 2004+ but can change(used bc gdp data)
+quarter_df <- pollution_df %>% filter(year > 2004) %>% group_by(join_quarter) %>% summarize(median_no2 = median(`NO2 Mean`)
+                                            , median_o3 = median(`O3 Mean`)
+                                            , median_so2 = median(`SO2 Mean`)
+                                            , median_co = median(`CO Mean`))
+```
+
+
+# Pollution Analysis (not including other datasets)
+
+## Overall charts
+
+```{r general day by day, echo=FALSE}
+
+## PLOTS BY DAY
+## median pollutants by day
+median_pollution_by_date <- pollution_df %>% group_by(`Date Local`) %>% summarize(median_no2 = median(`NO2 Mean`)
+                                                            , median_o3 = median(`O3 Mean`)
+                                                            , median_so2 = median(`SO2 Mean`)
+                                                            , median_co = median(`CO Mean`))
+
+## Plot pollutants
+## https://stackoverflow.com/questions/29425892/how-do-i-loop-through-column-names-and-make-a-ggplot-scatteplot-for-each-one
+## ^ how to loop through column names and plot
+for (col in colnames(median_pollution_by_date[2:5])) {
+  plt <- median_pollution_by_date %>% ggplot(aes(x = `Date Local`)) + geom_point(aes_string(y = col), alpha = .25) + 
+    labs(title = col)
+  print(plt)
+}
+
+## Derek Did these as lines as well.. Felt they went better up here
+## NO2
+pl1 <- median_pollution_by_date %>%
+  ggplot(aes(x = `Date Local` , y = median_no2))  + 
+  geom_line() + stat_smooth(method = "lm", aes(color = 'red'), show.legend = F) + labs(x = '', y = '', title = 'NO2')
+
+## SO2
+pl2 <- median_pollution_by_date %>%
+  ggplot(aes(x = `Date Local` , y = median_so2)) +
+  geom_line()  + stat_smooth(method = "lm", aes(color = 'red'), show.legend = F)+ labs(x = '', y = '', title = 'SO2')
+
+## O3
+pl3 <- median_pollution_by_date %>%
+  ggplot(aes(x = `Date Local` , y = median_o3)) +
+  geom_line() + stat_smooth(method = "lm", aes(color = 'red'), show.legend = F) + labs(x = '', y = '', title = 'O3')
+
+## CO
+pl4 <- median_pollution_by_date %>%
+  ggplot(aes(x = `Date Local` , y = median_co)) +
+  geom_line() + stat_smooth(method = "lm", aes(color = 'red'), show.legend = F) + labs(x = '', y = '', title = 'CO')
+
+grid <- plot_grid(pl1, pl2, pl3, pl4, align = "v", nrow = 2, label_x = 'Date')
+
+ggsave(filename = paste0("Pollutant_Grid.png"), 
+         width = 8,height=8,dpi = 150)
+
+
+```
+
+## City stuff
+
+``` {r city_analysis}
+## CITY ANALYSIS
+## Might be some interesting stuff in here but its going to be tougher to uncover than state and overall analysis
+## Also noticed some missing data here, ie cities just stopped reporting numbers
+## Might be worth looking at some major cities and finding trends (ie NYC looks interesting)
+
+## Number of cities in df
+length(unique(pollution_df$City))
+
+## Grab top 10 worst cities for each polluntant by finding max value of max value (ULTIMATE MAX)
+worst_possible_df <- pollution_df %>% group_by(City) %>% summarize(max_NO2 = max(`NO2 1st Max Value`), max_O3 = max(`O3 1st Max Value`), 
+                                                         max_SO2 = max(`SO2 1st Max Value`), max_CO = max(`CO 1st Max Value`))
+
+worst_no2_cities = head(worst_possible_df %>% arrange(desc(max_NO2)) %>% select(1), 10)
+worst_o3_cities = head(worst_possible_df %>% arrange(desc(max_O3)) %>% top_n(10) %>% select(1), 10)
+worst_so2_cities = head(worst_possible_df %>% arrange(desc(max_SO2)) %>% top_n(10) %>% select(1), 10)
+worst_co_cities = head(worst_possible_df %>% arrange(desc(max_CO)) %>% top_n(10) %>% select(1), 10)
+
+
+pollution_df %>% filter(City %in% worst_no2_cities$City) %>% group_by(`Date Local`, City) %>% summarize(median_no2 = median(`NO2 Mean`)) %>% 
+  ggplot() + geom_line(aes(x = `Date Local`, y = median_no2)) + facet_wrap(~City)
+
+## O3 worst city charts look alot like overall charts
+pollution_df %>% filter(City %in% worst_o3_cities$City) %>% group_by(`Date Local`, City) %>% summarize(median_o3 = median(`O3 Mean`)) %>% 
+  ggplot() + geom_line(aes(x = `Date Local`, y = median_o3)) + facet_wrap(~City)
+
+## New york has gotten much better
+pollution_df %>% filter(City %in% worst_so2_cities$City) %>% group_by(`Date Local`, City) %>% summarize(median_so2 = median(`SO2 Mean`)) %>% 
+  ggplot() + geom_line(aes(x = `Date Local`, y = median_so2)) + facet_wrap(~City)
+
+pollution_df %>% filter(City %in% worst_co_cities$City) %>% group_by(`Date Local`, City) %>% summarize(median_co = median(`CO Mean`)) %>% 
+  ggplot() + geom_line(aes(x = `Date Local`, y = median_co)) + facet_wrap(~City)
+
+
+
+
+## Some major cities? This looks better bc data for all dates mostly
+
+cities = c('New York', 'Los Angeles', 'Boston', 'Philadelphia', 'Phoenix', 'Washington', 'Houston', 'Charlotte', 'Dallas')
+
+big_city_df <- pollution_df %>% filter(City %in% cities)
+
+big_city_df %>% group_by(`Date Local`, City) %>% summarize(median_co = median(`CO Mean`)) %>% 
+  ggplot() + geom_line(aes(x = `Date Local`, y = median_co)) + facet_wrap(~City)
+
+```
+
+
+
+# Modeling (Derek)
+
+## Correlation Matrix
+
+```{r}
+## http://www.sthda.com/english/wiki/ggplot2-quick-correlation-matrix-heatmap-r-software-and-data-visualization
+## How to create corr plot
+
+## Create matrix
+median_pollution_by_date2 <- median_pollution_by_date %>%
+  transmute(median_no2, median_so2, median_o3, median_co)
+cor_matrix <- round(cor(median_pollution_by_date2, method = "pearson"), 2)
+cor_matrix
+
+## Plot
+corrplot(cor_matrix, order = "hclust", 
+         tl.col = "black", tl.srt = 45)
+
+get_lower_tri<-function(df) {
+    df[upper.tri(df)] <- NA
+    return(df)
+}
+
+reorder_df <- function(df){
+    # Use correlation between variables as distance
+    dd <- as.dist((1-df)/2)
+    hc <- hclust(dd)
+    df <-df[hc$order, hc$order]
+}
+
+reordered_df <- reorder_df(cor_matrix)
+
+lower_tri <- get_lower_tri(reordered_df)
+
+tri_df <- melt(lower_tri, na.rm = T)
+
+corr_plot <- tri_df %>% ggplot() + geom_tile(aes(x=Var1, y=Var2, fill=value), color = "white") + labs(title = 'Pollution Correlation', x = '', y ='') + scale_fill_gradient2(low = "blue", high = "red", mid = "white", midpoint = 0, limit = c(-1,1), space = "Lab", name="Pearson\nCorrelation") + coord_fixed() + geom_text(aes(Var1, Var2, label = value), color = "black", size = 4) + theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust = 1))
+
+ggsave(filename = paste0("Correlation_Matrix.png"), 
+         width = 8,height=8,dpi = 150)
+
+melted_cormat <- melt(cor_matrix)
+
+melted_cormat %>% ggplot() + geom_tile(aes(x=Var1, y=Var2, fill=value)) + labs(title = 'Pollution Correlation', x = '', y ='') + scale_fill_gradient2(low = "blue", high = "red", mid = "white", midpoint = 0, limit = c(-1,1), space = "Lab", name=" Pearson\nCorrelation")
+
+```
+
+Shows that the interaction between no2 & co and no2 & o3 are strong and should be added to each own's model. no2 & so2, co & so2 and co & o3 are close. Played around with log transformations and seemed to help with no2 as the target and logging so2. so2 and o3 is the only interaction that is definitely not correlated. 
+
+
+
+```{r}
+
+## Replace na and inf with na?
+df_year$median_so2[which(is.nan(df_year$median_so2))] = NA
+df_year$median_so2[which(df_year$median_so2==Inf)] = NA
+
+df_year <- df_year %>%
+  drop_na(median_so2) %>%
+  mutate(log_median_so2 = log(median_so2))
+
+df_year %>%
+  ggplot(aes(x = log_median_so2, y = median_no2)) + 
+  geom_point()
+#logging so2 when predicting no2 helps create linearity
+```
+
+
+Main model to predict pollutant levels for each State and Year that'll use
+1.State?
+2.Other pollutants from correlation matrix above
+3.GDP data
+4.Hear disease data
+
+## Linear Model
+
+```{r}
+## Should we add the final pollutant?
+model_no2 <- lm(median_no2 ~ State + median_co + median_so2, data = df_year)
+summary(model_no2)
+```
+
+
+##  Simple Time Series Model 
+
+-working on fitting an MA, AR, ARMA or ARIMA model to these time series which will naturally better fit these shapes than a linear model.
+
+```{r}
+
+ts_model_no2 <- lm(median_no2 ~ `Date Local`, data = median_pollution_by_date)
+summary(ts_model_no2)
+
+```
+
+
+## GDP Join and model
+
+```{r gdp_df}
+gdp_df <- read_csv('qgdpstate_all.csv') 
+
+## Not in time series; swap columns to rows for gdp
+gdp_df <- gdp_df %>% gather('quarter', 'gdp', `2005:Q1`:`2018:Q1`)
+gdp_df$gdp <- as.numeric(gdp_df$gdp)
+  
+## Quarter df filtered for 2004+ but can change(used bc gdp data)
+quarter_df_with_state <- pollution_df %>% filter(year > 2004) %>% group_by(join_quarter, State) %>% 
+                                            summarize(median_no2 = median(`NO2 Mean`)
+                                            , median_o3 = median(`O3 Mean`)
+                                            , median_so2 = median(`SO2 Mean`)
+                                            , median_co = median(`CO Mean`))
+
+## Join (filtered out a bunch of breakdown level stuff in the GDP data)
+pollutant_gdp_df <- quarter_df_with_state %>% left_join(gdp_df %>% filter(
+  Description == 'All industry total', GeoName != 'United States', ComponentId == 200) %>% select(gdp, quarter, GeoName), by = c('join_quarter' = 'quarter', 'State' = 'GeoName'))
+colnames(pollutant_gdp_df)[7] <- "total_gdp"
+
+pollutant_gdp_df <- pollutant_gdp_df %>% left_join(gdp_df %>% filter(
+  Description == 'Manufacturing', GeoName != 'United States', ComponentId == 200) %>% select(gdp, quarter, GeoName), by = c('join_quarter' = 'quarter', 'State' = 'GeoName'))
+colnames(pollutant_gdp_df)[8] <- "manufacturing_gdp"
+
+pollutant_gdp_df <- pollutant_gdp_df %>% left_join(gdp_df %>% filter(
+  Description == 'Mining, quarrying, and oil and gas extraction', GeoName != 'United States', ComponentId == 200) %>% select(gdp, quarter, GeoName), by = c('join_quarter' = 'quarter', 'State' = 'GeoName'))
+colnames(pollutant_gdp_df)[9] <- "mining_gas_gdp"
+
+pollutant_gdp_df <- pollutant_gdp_df %>% left_join(gdp_df %>% filter(
+  Description == 'Agriculture, forestry, fishing, and hunting', GeoName != 'United States', ComponentId == 200) %>% select(gdp, quarter, GeoName), by = c('join_quarter' = 'quarter', 'State' = 'GeoName'))
+colnames(pollutant_gdp_df)[10] <- "agriculture_gas_gdp"
+
+pollutant_gdp_df <- pollutant_gdp_df %>% left_join(gdp_df %>% filter(
+  Description == 'Transportation and warehousing', GeoName != 'United States', ComponentId == 200) %>% select(gdp, quarter, GeoName), by = c('join_quarter' = 'quarter', 'State' = 'GeoName'))
+colnames(pollutant_gdp_df)[11] <- "transportation_gdp"
+
+
+# ## Initial plot, can see two distinct lines in the data. This is caused by pollution being up and down in the winter/summer
+# pollutant_gdp_df %>% ggplot() + geom_point(aes(x = median_no2, y = gdp, color = join_quarter), show.legend = F)
+# 
+# ## Simple model to see how gdp does
+# model <- lm(median_no2 ~ gdp + State, data = pollutant_gdp_df)
+# 
+# summary(model)
+
+```
+
+
+```{r pop_data}
+##https://www.census.gov/data/tables/2017/demo/popest/total-cities-and-towns.html#tables
+##https://www.census.gov/data/datasets/time-series/demo/popest/intercensal-2000-2010-cities-and-towns.html
+## Load 2000-2009 and 2010-2017 pop data
+first_half <- read_csv('sub-est00int.csv')
+second_half <- read_csv('sub-est2017_all.csv')
+
+## Tidy format and group
+first_half_tidy <- first_half %>% gather('year', 'population', `POPESTIMATE2000`:`POPESTIMATE2009`) %>% group_by(STNAME, year) %>% 
+  summarize(population = sum(population))
+second_half_tidy <- second_half %>% gather('year', 'population', `POPESTIMATE2010`:`POPESTIMATE2017`) %>% group_by(STNAME, year) %>% 
+  summarize(population = sum(population))
+
+## Combine into one df
+pop_df <- rbind(first_half_tidy, second_half_tidy)
+
+## Pull out year number - https://stackoverflow.com/questions/14543627/extracting-numbers-from-vectors-of-strings
+pop_df$year <- as.numeric(gsub(".*?([0-9]+).*", "\\1", pop_df$year))
+pollutant_gdp_df$year <- as.numeric(gsub(".*?([0-9]+).*", "\\1", pollutant_gdp_df$join_quarter))
+
+gdp_pop_df <- pollutant_gdp_df %>% left_join(pop_df, by = c('year' = 'year', 'State' = 'STNAME'))
+
+```
+
+``` {r car_data}
+## https://www.fhwa.dot.gov/policyinformation/statistics/2016/mv1.cfm
+car_df <- data.frame()
+
+for (y in seq(from = 2007, to=2010, by=1)) {
+    temp_df <- readxl::read_excel(sprintf('.//car_data//mv1-%s.xls', y), skip = 13, col_names = F, n_max = 51) %>% select(1:11)
+    colnames(temp_df) <- c('State', 'private_auto', 'public_auto', 'total_auto', 'private_bus', 'public_bus', 'total_bus', 'drop', 
+                 'private_truck', 'public_truck', 'total_truck')
+    temp_df <- temp_df %>% select(-drop)
+    temp_df$year <- y
+    car_df <- rbind(car_df, temp_df)
+}
+
+
+for (y in seq(from = 2011, to = 2016, by = 1)) {
+    temp_df <- readxl::read_excel(sprintf('.//car_data//mv1-%s.xlsx', y), skip = 12, col_names = F, n_max = 51, 
+                             col_types = c('text', 'numeric','numeric','numeric','numeric','numeric','numeric','numeric','numeric','numeric', 'numeric', 'numeric', 'numeric', 'numeric','numeric', 'numeric')) %>% select(1:10)
+    
+    colnames(temp_df) <- c('State', 'private_auto', 'public_auto', 'total_auto', 'private_bus', 'public_bus', 'total_bus', 
+                 'private_truck', 'public_truck', 'total_truck')
+    temp_df$year <- y
+    car_df <- rbind(car_df, temp_df)
+}
+
+## Parse out the garbage
+car_df$State <-str_replace_all(car_df$State, fixed("  4/"), "")
+car_df$State <-str_replace_all(car_df$State, fixed(" 4/"), "")
+car_df$State <-str_replace_all(car_df$State, fixed("  5/"), "")
+car_df$State <-str_replace_all(car_df$State, fixed(" 5/"), "")
+car_df$State <-str_replace_all(car_df$State, fixed("  6/"), "")
+car_df$State <-str_replace_all(car_df$State, fixed(" (1)"), "")
+car_df$State <-str_replace_all(car_df$State, fixed(" (2)"), "")
+car_df$State <-str_replace_all(car_df$State, fixed(" (3)"), "")
+car_df$State <-str_replace_all(car_df$State, fixed(" (4)"), "")
+car_df$State <-str_replace_all(car_df$State, fixed(" (5)"), "")
+car_df$State <- str_trim(car_df$State)
+
+colnames(car_df)
+
+gdp_pop_cars_df <- gdp_pop_df %>% filter(year >= 2007) %>% left_join(car_df, by = c('year' = 'year', 'State' = 'State'))
+```
+
+
+```{r some_modeling}
+
+cross_val <- function(formula, df, folds) {
+  
+  ## reproducibility
+  set.seed(1)
+  
+  df_folds <- crossv_kfold(df, folds)
+
+  ## Fit Model
+  df_folds <- df_folds %>% mutate(fit = map(train, ~ lm(formula, data = .)))
+  df_folds <- df_folds %>% mutate(rmse_train = map2_dbl(fit, train, ~ rmse(.x, .y)), rmse_test = map2_dbl(fit, test, ~ rmse(.x, .y)))
+  
+  ## return mean rmse
+  mean(df_folds$rmse_test)
+
+
+}
+
+
+all_variables_df <- read_csv('pollution_with_more_variables.csv') %>% select(-1)
+all_variables_df$quarter <- substr(all_variables_df$join_quarter, nchar(all_variables_df$join_quarter) - 2, nchar(all_variables_df$join_quarter))
+
+
+for (col in colnames(all_variables_df[7:length(colnames(all_variables_df))])) {
+   plt <- all_variables_df %>% ggplot(aes(x = `median_no2`, color = quarter)) + geom_point(aes_string(y = col)) + labs(title = col)
+   print(plt)
+   }
+
+
+
+test_model <- lm(median_no2 ~ quarter + total_gdp + manufacturing_gdp + population + private_auto, data = all_variables_df)
+
+summary(test_model)
+cross_val(median_no2 ~ quarter + total_gdp + manufacturing_gdp + population + private_auto, all_variables_df, 5)
+
+
+all_variables_df %>% add_residuals(test_model) %>%  ggplot() + geom_point(aes(x = resid, y = total_gdp))
+
+```
+
+# Vitals Combination and Analysis (Gopa and Shaw)
+
+```{r load in data}
+## Load in data
+vital_stat <- read_csv("National_Vital_Statistics_System__NVSS__-_National_Cardiovascular_Disease_Surveillance_Data.csv")
+
+## Transform for combination with year df
+major_cardio_summary <- vital_stat %>% filter(Break_Out == "Overall") %>%
+                        group_by(Year, LocationDesc, Topic) %>%
+                        summarise(Average = mean(Data_Value, na.rm = T)) %>%
+                        mutate(year=Year, State=tolower(LocationDesc),
+                               Topic=plyr::mapvalues(Topic,c("Acute Myocardial Infarction (Heart Attack)","Diseases of the Heart (Heart Disease)"), c("Heart Attack", "Heart Disease"))) %>%
+                        mutate(Topic=paste(Topic,"(rate per 100k)",sep = " ")) %>%
+                        spread(Topic, value = "Average") %>% ungroup() %>%
+                        select(-c(LocationDesc, Year))
+
+## Join
+pollute_join_vital <- df_year %>% left_join(major_cardio_summary, by=c("year","State"))
+
+```
+
+
+Could we also tie this to quarter? not sure if its possible
+
+
+# Some gif charts and other fun things (Devon)
+
+
+Note on running: Will create a whole charts in your directory depending on where you save
+
+Also i sent the wrong file to the google drive.. will need to fix tomorrow if anyone even reads this.
+TODAY IS 11-13-2018 wooooooooooooooo what a rainy tuesday.
+
+## State gif by year
+
+```{r gif chart}
+
+## https://ryanpeek.github.io/2016-10-19-animated-gif_maps_in_R/
+## How to plot gif^
+
+directory = './state_gif/' ## Change directory if you want to create pictures in seperate folder otherwise make this empty: ''
+
+## Load map
+maps <- map_data('state')
+
+## join into one df
+maps <- maps %>% left_join(df_year, by = c('region' = 'State'))
+
+## function to chart for each year and save chart
+year_plot <- function(y) {
+  
+  maps %>% filter(year == y) %>% ggplot() + geom_polygon(mapping=aes(
+    x=long, y=lat, group=group, fill = median_no2), color="black") + 
+    labs(title = y)+ coord_map()
+  
+  ## Save charts to file 
+  ggsave(filename = paste0(directory, "state",y,".png"), 
+         width = 8,height=8,dpi = 150)
+}
+
+## Create plots
+map_df(seq(from = 2000, to=2016, by=1), year_plot)
+
+## Load plots and create gif
+list.files(path = directory, pattern = "*.png", full.names = T) %>% 
+  purrr::map(image_read) %>% # reads each path file
+  image_join() %>% # joins image
+  image_animate(fps=2) %>% # animates, can opt for number of loops
+  image_write("us_state.gif")
+
+```
+
+
+## Whole US by Quarter
+
+Using joined gdp-pollution bc more data is fun. This one takes a little while for reasons i cant say.
+
+
+```{r gif}
+## This one doesnt run right now
+
+## https://ryanpeek.github.io/2016-10-19-animated-gif_maps_in_R/
+## How to plot gif^
+## https://stackoverflow.com/questions/1249548/side-by-side-plots-with-ggplot2
+## side by side plots
+
+directory = './us_gif/'
+
+## Load map
+maps <- map_data('usa')
+
+## add main col for join
+pollutant_gdp_df$region <- 'main' 
+## join into one df
+maps <- maps %>% left_join(pollutant_gdp_df)
+
+# plot1 <- maps %>% filter(join_quarter =="2005:Q1") %>% ggplot() + geom_polygon(mapping=aes(
+#   x=long, y=lat, group=group, fill = median_no2), color="black") + 
+#   labs(title = "2005:Q1") + coord_map() + scale_fill_gradientn(limits = c(0,20),
+#   colours=c("red",  "blue")) + theme(axis.text.y = element_blank(), axis.text.x = element_blank()) + labs(x = '', y = '')
+# 
+# plot2 <- maps %>% group_by(join_quarter) %>% summarize(median_no2 = median(median_no2, na.rm=T)) %>% ggplot() + geom_point(aes(x = join_quarter, y = median_no2)) + theme(axis.text.y = element_blank(), axis.text.x = element_blank()) + labs(x = '', y = '')
+# 
+# plot_grid(plot1, plot2, align = "v", nrow = 2, rel_heights = c(2/3, 1/3))
+
+## function to chart for each year and save chart
+make_charts <- function(q) {
+  
+  plot1 <- maps %>% filter(join_quarter == q) %>% ggplot() + geom_polygon(mapping=aes(
+    x=long, y=lat, group=group, fill = median_no2), color="black") + 
+    labs(title = q) + coord_map() + scale_fill_gradientn(limits = c(0,20), colours=c("blue",  "red")) + 
+    theme(axis.text.y = element_blank(), axis.text.x = element_blank()) + labs(x = '', y = '')
+  
+  plot2 <- maps %>% group_by(join_quarter) %>% summarize(median_no2 = median(median_no2, na.rm=T)) %>% ggplot() + geom_point(
+    aes(x = join_quarter, y = median_no2)) + theme(axis.text.y = element_blank(), axis.text.x =  element_blank()) + labs(x = '', y = '')
+
+  plot_grid(plot1, plot2, align = "v", nrow = 2, rel_heights = c(2/3, 1/3))
+  
+  save_name = gsub(':', '', q)
+  
+  ## Save charts to file 
+  ggsave(filename = paste0(directory, "usa_map", save_name, ".png"), 
+         width = 8,height=8,dpi = 150)
+}
+
+quarters = pollutant_gdp_df$join_quarter
+## Create plots
+map_df(quarters, make_charts)
+
+## Load plots and create gif
+list.files(path = directory, pattern = "*.png", full.names = T) %>% 
+  purrr::map(image_read) %>% # reads each path file
+  image_join() %>% # joins image
+  image_animate(fps=2) %>% # animates, can opt for number of loops
+  image_write("us_total_test.gif")
+
+```
+
+
+```{r gif}
+
+## https://ryanpeek.github.io/2016-10-19-animated-gif_maps_in_R/
+## How to plot gif^
+
+directory = './city_gif/' ## Change directory if you want to create pictures in seperate folder otherwise make this empty: ''
+
+## Load map
+maps <- map_data('state')
+
+us.cities$parse_name <- substr(us.cities$name, 1, nchar(us.cities$name) - 3)
+
+big_city_df_lat_long <- big_city_df %>% left_join(us.cities, by = c('City' = 'parse_name'))
+plot_city <- big_city_df_lat_long %>% group_by(`Date Local`, City, lat, long) %>% summarize(pollute = median(`NO2 Mean`))
+
+## function to chart for each year and save chart
+year_plot <- function(q) {
+  
+  plot1 <- maps %>% ggplot() + geom_polygon(mapping=aes(
+    x=long, y=lat, group = group), fill = 'grey', color="black") + geom_point(data = plot_city %>% filter(`Date Local` == q) , mapping=aes(x=long, y=lat, size = pollute, color = pollute), show.legend = F) + scale_colour_gradient(limits = c(5,50), low = "#EBDD0B", high = "#FF1010", space = "Lab", na.value = "grey50", guide = "colourbar", aesthetics = "colour")  + coord_map() +labs(title = q) + theme(axis.text.y = element_blank(), axis.text.x = element_blank(), line = element_blank()) + labs(x = '', y = '')+ scale_size(range = c(0, 10))
+    
+  
+  plot2 <- median_pollution_by_date %>%
+  ggplot(aes(x = `Date Local` , y = median_no2)) +
+  geom_line() + geom_vline(xintercept = q, color = 'red', show.legend = F) + labs(x = '', y = '', title = 'SO2')
+  
+
+  plot_grid(plot1, plot2, align = "v", nrow = 2, rel_heights = c(2/3, 1/3))
+
+  
+  ## Save charts to file 
+  ggsave(filename = paste0(directory, "city_map", q, ".png"), 
+         width = 8,height=8,dpi = 150)
+  
+}
+
+quarters = unique(big_city_df$`Date Local`)
+## Create plots
+map_df(quarters, year_plot)
+
+## Load plots and create gif
+list.files(path = directory, pattern = "*.png", full.names = T) %>% 
+  purrr::map(image_read) %>% # reads each path file
+  image_join() %>% # joins image
+  image_animate(fps=25) %>% # animates, can opt for number of loops
+  image_write("us_city.gif")
+
+
+
+pl1
+
+```
+
+
+
+
+
+
+
+
+
+
+
